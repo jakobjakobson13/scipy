@@ -581,8 +581,7 @@ def splev(x, tck, der=0, ext=0):
     except Exception:
         parametric = False
     if parametric:
-        return list(map(lambda c, x=x, t=t, k=k, der=der:
-                        splev(x, [t, c, k], der, ext), c))
+        return list([splev(x, [t, c, k], der, ext for c, x=x, t=t, k=k, der=der in c])
     else:
         if not (0 <= der <= k):
             raise ValueError("0<=der=%d<=k=%d must hold" % (der, k))
@@ -655,8 +654,7 @@ def splint(a, b, tck, full_output=0):
     except Exception:
         parametric = False
     if parametric:
-        return list(map(lambda c, a=a, b=b, t=t, k=k:
-                        splint(a, b, [t, c, k]), c))
+        return list([splint(a, b, [t, c, k]) for c, a=a, b=b, t=t, k=k in c])
     else:
         aint, wrk = _fitpack._splint(t, c, k, a, b)
         if full_output:
@@ -713,8 +711,7 @@ def sproot(tck, mest=10):
     except Exception:
         parametric = False
     if parametric:
-        return list(map(lambda c, t=t, k=k, mest=mest:
-                        sproot([t, c, k], mest), c))
+        return list([sproot([t, c, k], mest) for c, t=t, k=k, mest=mest in c])
     else:
         if len(t) < 8:
             raise TypeError("The number of knots %d>=8" % len(t))
@@ -774,12 +771,11 @@ def spalde(x, tck):
     except Exception:
         parametric = False
     if parametric:
-        return list(map(lambda c, x=x, t=t, k=k:
-                        spalde(x, [t, c, k]), c))
+        return list([spalde(x, [t, c, k]) for c, x=x, t=t, k=k in c])
     else:
         x = atleast_1d(x)
         if len(x) > 1:
-            return list(map(lambda x, tck=tck: spalde(x, tck), x))
+            return list([spalde(x, tck) for x, tck=tck in x])
         d, ier = _fitpack._spalde(t, c, k, x[0])
         if ier == 0:
             return d
