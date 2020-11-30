@@ -968,7 +968,7 @@ class FusedFunc(Func):
         for (outtype, _), outvar in zip(self.outtypes, self.outvars):
             line = "cdef {} {}".format(outtype, outvar)
             body.append(tab + line)
-        addr_outvars = [f"{x}" for x in self.outvars]
+        addr_outvars = [f"&{x}" for x in self.outvars]
         line = "{}({}, {})".format(self.name, ", ".join(self.invars),
                                    ", ".join(addr_outvars))
         body.append(tab + line)
