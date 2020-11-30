@@ -100,7 +100,7 @@ def main():
     with open(fn + '.new', 'w') as f:
         f.write(header.format(K, N))
         for k, row in enumerate(d):
-            row = map(lambda x: mp.nstr(x, 17, min_fixed=0, max_fixed=0), row)
+            row = [mp.nstr(x, 17, min_fixed=0, max_fixed=0) for x in row]
             f.write('{')
             f.write(", ".join(row))
             if k < K - 1:
