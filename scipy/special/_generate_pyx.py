@@ -514,9 +514,9 @@ def generate_doc(name, specs):
     for spec in specs:
         incodes, outcodes = spec.split("->")
         incodes = incodes.split("*")
-        intypes = list(map(lambda x: CY_TYPES[x], incodes[0]))
+        intypes = list([CY_TYPES[x] for x in incodes[0]])
         if len(incodes) > 1:
-            types = map(lambda x: "{} *".format(CY_TYPES[x]), incodes[1])
+            types = [f"{CY_TYPES[x]} *" for x in incodes[1]]
             intypes.extend(types)
         outtype = CY_TYPES[outcodes]
         line = "{} {}({})".format(outtype, name, ", ".join(intypes))
@@ -920,7 +920,7 @@ class FusedFunc(Func):
         # Set fused-type variables to nan
         all_codes = tuple([codes for _unused, codes in fused_types])
 
-        codelens = list(map(lambda x: len(x), all_codes))
+        codelens = list([len(x) for x in all_codes])
         last = numpy.prod(codelens) - 1
         for m, codes in enumerate(itertools.product(*all_codes)):
             fused_codes, decs = [], []
@@ -939,7 +939,7 @@ class FusedFunc(Func):
                 adverb = "elif"
             cond = self._get_conditional(fused_types, codes, adverb)
             lines.append(2*tab + cond)
-            lines.extend(map(lambda x: 3*tab + x, decs))
+            lines.extend([3*tab + x for x in decs])
         return lines
 
     def _get_tmp_decs(self, all_tmpvars):
@@ -968,7 +968,7 @@ class FusedFunc(Func):
         for (outtype, _), outvar in zip(self.outtypes, self.outvars):
             line = "cdef {} {}".format(outtype, outvar)
             body.append(tab + line)
-        addr_outvars = map(lambda x: "&{}".format(x), self.outvars)
+        addr_outvars = [f"{x}" for x in self.outvars]
         line = "{}({}, {})".format(self.name, ", ".join(self.invars),
                                    ", ".join(addr_outvars))
         body.append(tab + line)
@@ -995,8 +995,8 @@ class FusedFunc(Func):
         else:
             cpp = False
 
-        intypes = list(map(lambda x: CY_TYPES[x], incodes))
-        outtypes = list(map(lambda x: CY_TYPES[x], outcodes))
+        intypes = list([CY_TYPES[x] for x in incodes])
+        outtypes = list([CY_TYPES[x] for x in outcodes])
         retcode = re.sub(r'\*.*', '', retcode)
         if not retcode:
             retcode = 'v'
@@ -1094,7 +1094,7 @@ class FusedFunc(Func):
 
             call = "{}({})".format(func_name, ", ".join(callvars))
             body.append(sp + call)
-            body.extend(map(lambda x: sp + x, casts))
+            body.extend([sp + x for x in casts])
             if len(outcodes) == 1:
                 sig = "{}->{}".format(incodes, outcodes)
                 specs.append(sig)
@@ -1153,7 +1153,7 @@ class FusedFunc(Func):
                 call = double_complex_from_npy_cdouble(call)
             call = "{}[0] = {}".format(self.outvars[0], call)
             body.append(sp + call)
-            body.extend(map(lambda x: sp + x, casts))
+            body.extend([sp + x for x in casts])
             sig = "{}*{}->v".format(incodes, outcodes + retcode)
             specs.append(sig)
 
