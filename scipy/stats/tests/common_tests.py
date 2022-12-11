@@ -2,7 +2,7 @@ import pickle
 
 import numpy as np
 import numpy.testing as npt
-from numpy.testing import assert_allclose, assert_equal, suppress_warnings
+from numpy.testing import assert_allclose, assert_equal
 from pytest import raises as assert_raises
 
 import numpy.ma.testutils as ma_npt
@@ -23,9 +23,7 @@ def check_normalization(distfn, args, distname):
     norm_moment = distfn.moment(0, *args)
     npt.assert_allclose(norm_moment, 1.0)
 
-    # this is a temporary plug: either ncf or expect is problematic;
-    # best be marked as a knownfail, but I've no clue how to do it.
-    if distname == "ncf":
+    if distname == "rv_histogram_instance":
         atol, rtol = 1e-5, 0
     else:
         atol, rtol = 1e-7, 1e-7
@@ -65,10 +63,10 @@ def check_mean_expect(distfn, arg, m, msg):
 
 
 def check_var_expect(distfn, arg, m, v, msg):
+    kwargs = {'rtol': 5e-6} if msg == "rv_histogram_instance" else {}
     if np.isfinite(v):
         m2 = distfn.expect(lambda x: x*x, arg)
-        npt.assert_almost_equal(m2, v + m*m, decimal=5, err_msg=msg +
-                            ' - 2st moment (expect)')
+        npt.assert_allclose(m2, v + m*m, **kwargs)
 
 
 def check_skew_expect(distfn, arg, m, v, s, msg):
@@ -265,7 +263,7 @@ def check_cmplx_deriv(distfn, arg):
         assert_allclose(deriv(distfn.sf, x, *arg), -pdf, rtol=1e-5)
         assert_allclose(deriv(distfn.logsf, x, *arg), -pdf/sf, rtol=1e-5)
 
-        assert_allclose(deriv(distfn.logpdf, x, *arg), 
+        assert_allclose(deriv(distfn.logpdf, x, *arg),
                         deriv(distfn.pdf, x, *arg) / distfn.pdf(x, *arg),
                         rtol=1e-5)
 
@@ -277,6 +275,7 @@ def check_pickling(distfn, args):
     # save the random_state (restore later)
     rndm = distfn.random_state
 
+    # check unfrozen
     distfn.random_state = 1234
     distfn.rvs(*args, size=8)
     s = pickle.dumps(distfn)
@@ -291,6 +290,22 @@ def check_pickling(distfn, args):
     npt.assert_equal(medians[0], medians[1])
     npt.assert_equal(distfn.cdf(medians[0], *args),
                      unpickled.cdf(medians[1], *args))
+
+    # check frozen pickling/unpickling with rvs
+    frozen_dist = distfn(*args)
+    pkl = pickle.dumps(frozen_dist)
+    unpickled = pickle.loads(pkl)
+
+    r0 = frozen_dist.rvs(size=8)
+    r1 = unpickled.rvs(size=8)
+    npt.assert_equal(r0, r1)
+
+    # check pickling/unpickling of .fit method
+    if hasattr(distfn, "fit"):
+        fit_function = distfn.fit
+        pickled_fit_function = pickle.dumps(fit_function)
+        unpickled_fit_function = pickle.loads(pickled_fit_function)
+        assert fit_function.__name__ == unpickled_fit_function.__name__ == "fit"
 
     # restore the random_state
     distfn.random_state = rndm
@@ -311,14 +326,10 @@ def check_freezing(distfn, args):
 
 def check_rvs_broadcast(distfunc, distname, allargs, shape, shape_only, otype):
     np.random.seed(123)
-    with suppress_warnings() as sup:
-        # frechet_l and frechet_r are deprecated, so all their
-        # methods generate DeprecationWarnings.
-        sup.filter(category=DeprecationWarning, message=".*frechet_")
-        sample = distfunc.rvs(*allargs)
-        assert_equal(sample.shape, shape, "%s: rvs failed to broadcast" % distname)
-        if not shape_only:
-            rvs = np.vectorize(lambda *allargs: distfunc.rvs(*allargs), otypes=otype)
-            np.random.seed(123)
-            expected = rvs(*allargs)
-            assert_allclose(sample, expected, rtol=1e-15)
+    sample = distfunc.rvs(*allargs)
+    assert_equal(sample.shape, shape, "%s: rvs failed to broadcast" % distname)
+    if not shape_only:
+        rvs = np.vectorize(lambda *allargs: distfunc.rvs(*allargs), otypes=otype)
+        np.random.seed(123)
+        expected = rvs(*allargs)
+        assert_allclose(sample, expected, rtol=1e-13)

@@ -14,13 +14,15 @@ import warnings
 import numpy as np
 cimport numpy as np
 
-from scipy.sparse import csr_matrix, isspmatrix, isspmatrix_csr, isspmatrix_csc
+from scipy.sparse import csr_matrix, isspmatrix
 from scipy.sparse.csgraph._validation import validate_graph
 
 cimport cython
 
 from libc.stdlib cimport malloc, free
 from numpy.math cimport INFINITY
+
+np.import_array()
 
 include 'parameters.pxi'
 
@@ -144,7 +146,7 @@ def shortest_path(csgraph, method='auto',
 
     >>> dist_matrix, predecessors = shortest_path(csgraph=graph, directed=False, indices=0, return_predecessors=True)
     >>> dist_matrix
-    array([ 0.,  1.,  2.,  2.])
+    array([0., 1., 2., 2.])
     >>> predecessors
     array([-9999,     0,     0,     1], dtype=int32)
 
@@ -164,12 +166,20 @@ def shortest_path(csgraph, method='auto',
         issparse = isspmatrix(csgraph)
         if issparse:
             Nk = csgraph.nnz
+            if csgraph.format in ('csr', 'csc', 'coo'):
+                edges = csgraph.data
+            else:
+                edges = csgraph.tocoo().data
+        elif np.ma.isMaskedArray(csgraph):
+            Nk = csgraph.count()
+            edges = csgraph.compressed()
         else:
-            Nk = np.sum(csgraph > 0)
+            edges = csgraph[np.isfinite(csgraph)]
+            edges = edges[edges != 0]
+            Nk = edges.size
 
         if indices is not None or Nk < N * N / 4:
-            if ((issparse and np.any(csgraph.data < 0))
-                      or (not issparse and np.any(csgraph < 0))):
+            if np.any(edges < 0):
                 method = 'J'
             else:
                 method = 'D'
@@ -261,7 +271,7 @@ def floyd_warshall(csgraph, directed=True,
     >>> from scipy.sparse.csgraph import floyd_warshall
 
     >>> graph = [
-    ... [0, 1 , 2, 0],
+    ... [0, 1, 2, 0],
     ... [0, 0, 0, 1],
     ... [2, 0, 0, 3],
     ... [0, 0, 0, 0]
@@ -277,10 +287,10 @@ def floyd_warshall(csgraph, directed=True,
 
     >>> dist_matrix, predecessors = floyd_warshall(csgraph=graph, directed=False, return_predecessors=True)
     >>> dist_matrix
-    array([[ 0.,  1.,  2.,  2.],
-           [ 1.,  0.,  3.,  1.],
-           [ 2.,  3.,  0.,  3.],
-           [ 2.,  1.,  3.,  0.]])
+    array([[0., 1., 2., 2.],
+           [1., 0., 3., 1.],
+           [2., 3., 0., 3.],
+           [2., 1., 3., 0.]])
     >>> predecessors
     array([[-9999,     0,     0,     1],
            [    1, -9999,     0,     1],
@@ -294,7 +304,7 @@ def floyd_warshall(csgraph, directed=True,
     if not isspmatrix(csgraph):
         # for dense array input, zero entries represent non-edge
         dist_matrix[dist_matrix == 0] = INFINITY
-        
+
     if unweighted:
         dist_matrix[~np.isinf(dist_matrix)] = 1
 
@@ -497,7 +507,7 @@ def dijkstra(csgraph, directed=True, indices=None,
 
     >>> dist_matrix, predecessors = dijkstra(csgraph=graph, directed=False, indices=0, return_predecessors=True)
     >>> dist_matrix
-    array([ 0.,  1.,  2.,  2.])
+    array([0., 1., 2., 2.])
     >>> predecessors
     array([-9999,     0,     0,     1], dtype=int32)
 
@@ -540,8 +550,7 @@ def dijkstra(csgraph, directed=True, indices=None,
         dist_matrix = np.full(N, np.inf, dtype=DTYPE)
         dist_matrix[indices] = 0
     else:
-        dist_matrix = np.zeros((len(indices), N), dtype=DTYPE)
-        dist_matrix.fill(np.inf)
+        dist_matrix = np.full((len(indices), N), np.inf, dtype=DTYPE)
         dist_matrix[np.arange(len(indices)), indices] = 0
 
     #------------------------------
@@ -650,7 +659,7 @@ cdef _dijkstra_scan_heap_multi(FibonacciHeap *heap,
                                int return_pred,
                                DTYPE_t limit):
     cdef:
-        unsigned int i, k, j_source, j_current
+        unsigned int j_current
         ITYPE_t j
         DTYPE_t next_val
         FibonacciNode *current_node
@@ -689,7 +698,7 @@ cdef _dijkstra_scan_heap(FibonacciHeap *heap,
                          DTYPE_t limit,
                          int i):
     cdef:
-        unsigned int k, j_source, j_current
+        unsigned int j_current
         ITYPE_t j
         DTYPE_t next_val
         FibonacciNode *current_node
@@ -713,25 +722,25 @@ cdef _dijkstra_scan_heap(FibonacciHeap *heap,
                         pred[i, j_current] = v.index
 
 @cython.boundscheck(False)
-cdef _dijkstra_directed(
+cdef int _dijkstra_directed(
             const int[:] source_indices,
             const double[:] csr_weights,
             const int[:] csr_indices,
             const int[:] csr_indptr,
             double[:, :] dist_matrix,
             int[:, :] pred,
-            DTYPE_t limit):
+            DTYPE_t limit) except -1:
     cdef:
         unsigned int Nind = dist_matrix.shape[0]
         unsigned int N = dist_matrix.shape[1]
-        unsigned int i, k, j_source, j_current
-        ITYPE_t j
-        DTYPE_t next_val
+        unsigned int i, k, j_source
         int return_pred = (pred.size > 0)
         FibonacciHeap heap
         FibonacciNode *v
         FibonacciNode* nodes = <FibonacciNode*> malloc(N *
                                                        sizeof(FibonacciNode))
+    if nodes == NULL:
+        raise MemoryError("Failed to allocate memory in _dijkstra_directed")
 
     for i in range(Nind):
         j_source = source_indices[i]
@@ -755,9 +764,10 @@ cdef _dijkstra_directed(
             dist_matrix[i, v.index] = v.val
 
     free(nodes)
+    return 0
 
 @cython.boundscheck(False)
-cdef _dijkstra_directed_multi(
+cdef int _dijkstra_directed_multi(
             const int[:] source_indices,
             const double[:] csr_weights,
             const int[:] csr_indices,
@@ -765,14 +775,9 @@ cdef _dijkstra_directed_multi(
             double[:] dist_matrix,
             int[:] pred,
             int[:] sources,
-            DTYPE_t limit):
+            DTYPE_t limit) except -1:
     cdef:
-        unsigned int Nind = source_indices.shape[0]
         unsigned int N = dist_matrix.shape[0]
-        unsigned int i, k, j_source, j_current
-        ITYPE_t j
-
-        DTYPE_t next_val
 
         int return_pred = (pred.size > 0)
 
@@ -780,6 +785,9 @@ cdef _dijkstra_directed_multi(
         FibonacciNode *v
         FibonacciNode* nodes = <FibonacciNode*> malloc(N *
                                                        sizeof(FibonacciNode))
+    if nodes == NULL:
+        raise MemoryError("Failed to allocate memory in "
+                          "_dijkstra_directed_multi")
 
     # initialize the heap with each of the starting
     # nodes on the heap and in a scanned state with 0 values
@@ -800,9 +808,10 @@ cdef _dijkstra_directed_multi(
         dist_matrix[v.index] = v.val
 
     free(nodes)
+    return 0
 
 @cython.boundscheck(False)
-cdef _dijkstra_undirected(
+cdef int _dijkstra_undirected(
             int[:] source_indices,
             double[:] csr_weights,
             int[:] csr_indices,
@@ -812,18 +821,18 @@ cdef _dijkstra_undirected(
             int[:] csrT_indptr,
             double[:, :] dist_matrix,
             int[:, :] pred,
-            DTYPE_t limit):
+            DTYPE_t limit) except -1:
     cdef:
         unsigned int Nind = dist_matrix.shape[0]
         unsigned int N = dist_matrix.shape[1]
-        unsigned int i, k, j_source, j_current
-        ITYPE_t j
-        DTYPE_t next_val
+        unsigned int i, k, j_source
         int return_pred = (pred.size > 0)
         FibonacciHeap heap
         FibonacciNode *v
         FibonacciNode* nodes = <FibonacciNode*> malloc(N *
                                                        sizeof(FibonacciNode))
+    if nodes == NULL:
+        raise MemoryError("Failed to allocate memory in _dijkstra_undirected")
 
     for i in range(Nind):
         j_source = source_indices[i]
@@ -851,9 +860,10 @@ cdef _dijkstra_undirected(
             dist_matrix[i, v.index] = v.val
 
     free(nodes)
+    return 0
 
 @cython.boundscheck(False)
-cdef _dijkstra_undirected_multi(
+cdef int _dijkstra_undirected_multi(
             int[:] source_indices,
             double[:] csr_weights,
             int[:] csr_indices,
@@ -864,19 +874,17 @@ cdef _dijkstra_undirected_multi(
             double[:] dist_matrix,
             int[:] pred,
             int[:] sources,
-            DTYPE_t limit):
+            DTYPE_t limit) except -1:
     cdef:
-        unsigned int Nind = source_indices.shape[0]
         unsigned int N = dist_matrix.shape[0]
-        unsigned int i, k, j_source, j_current
-        ITYPE_t j
-        DTYPE_t next_val
         int return_pred = (pred.size > 0)
         FibonacciHeap heap
         FibonacciNode *v
-        FibonacciNode *current_node
         FibonacciNode* nodes = <FibonacciNode*> malloc(N *
                                                        sizeof(FibonacciNode))
+    if nodes == NULL:
+        raise MemoryError("Failed to allocate memory in "
+                          "_dijkstra_undirected_multi")
 
     _dijkstra_setup_heap_multi(&heap, nodes, source_indices,
                                sources, dist_matrix, return_pred)
@@ -897,6 +905,7 @@ cdef _dijkstra_undirected_multi(
         dist_matrix[v.index] = v.val
 
     free(nodes)
+    return 0
 
 
 def bellman_ford(csgraph, directed=True, indices=None,
@@ -981,7 +990,7 @@ def bellman_ford(csgraph, directed=True, indices=None,
 
     >>> dist_matrix, predecessors = bellman_ford(csgraph=graph, directed=False, indices=0, return_predecessors=True)
     >>> dist_matrix
-    array([ 0.,  1.,  2.,  2.])
+    array([0., 1., 2., 2.])
     >>> predecessors
     array([-9999,     0,     0,     1], dtype=int32)
 
@@ -1215,7 +1224,7 @@ def johnson(csgraph, directed=True, indices=None,
 
     >>> dist_matrix, predecessors = johnson(csgraph=graph, directed=False, indices=0, return_predecessors=True)
     >>> dist_matrix
-    array([ 0.,  1.,  2.,  2.])
+    array([0., 1., 2., 2.])
     >>> predecessors
     array([-9999,     0,     0,     1], dtype=int32)
 
@@ -1330,7 +1339,7 @@ cdef int _johnson_directed(
             double[:] dist_array):
     cdef:
         unsigned int N = dist_array.shape[0]
-        unsigned int j, k, j_source, count
+        unsigned int j, k, count
         DTYPE_t d1, d2, w12
 
     # relax all edges (N+1) - 1 times
@@ -1366,7 +1375,7 @@ cdef int _johnson_undirected(
             double[:] dist_array):
     cdef:
         unsigned int N = dist_array.shape[0]
-        unsigned int j, k, ind_k, j_source, count
+        unsigned int j, k, ind_k, count
         DTYPE_t d1, d2, w12
 
     # relax all edges (N+1) - 1 times
@@ -1438,14 +1447,6 @@ cdef void initialize_node(FibonacciNode* node,
     node.children = NULL
 
 
-cdef FibonacciNode* rightmost_sibling(FibonacciNode* node):
-    # Assumptions: - node is a valid pointer
-    cdef FibonacciNode* temp = node
-    while(temp.right_sibling):
-        temp = temp.right_sibling
-    return temp
-
-
 cdef FibonacciNode* leftmost_sibling(FibonacciNode* node):
     # Assumptions: - node is a valid pointer
     cdef FibonacciNode* temp = node
@@ -1474,10 +1475,14 @@ cdef void add_sibling(FibonacciNode* node, FibonacciNode* new_sibling):
     # Assumptions: - node is a valid pointer
     #              - new_sibling is a valid pointer
     #              - new_sibling is not the child or sibling of another node
-    cdef FibonacciNode* temp = rightmost_sibling(node)
-    temp.right_sibling = new_sibling
-    new_sibling.left_sibling = temp
-    new_sibling.right_sibling = NULL
+    
+    # Insert new_sibling between node and node.right_sibling
+    if node.right_sibling:
+        node.right_sibling.left_sibling = new_sibling
+    new_sibling.right_sibling = node.right_sibling
+    new_sibling.left_sibling = node
+    node.right_sibling = new_sibling
+
     new_sibling.parent = node.parent
     if new_sibling.parent:
         new_sibling.parent.rank += 1
@@ -1487,12 +1492,8 @@ cdef void remove(FibonacciNode* node):
     # Assumptions: - node is a valid pointer
     if node.parent:
         node.parent.rank -= 1
-        if node.left_sibling:
-            node.parent.children = node.left_sibling
-        elif node.right_sibling:
+        if node.parent.children == node:  # node is the leftmost sibling.
             node.parent.children = node.right_sibling
-        else:
-            node.parent.children = NULL
 
     if node.left_sibling:
         node.left_sibling.right_sibling = node.right_sibling
@@ -1513,6 +1514,8 @@ ctypedef FibonacciNode* pFibonacciNode
 
 
 cdef struct FibonacciHeap:
+    # In this representation, min_node is always at the leftmost end
+    # of the linked-list, hence min_node.left_sibling is always NULL.
     FibonacciNode* min_node
     pFibonacciNode[100] roots_by_rank  # maximum number of nodes is ~2^100.
 
@@ -1523,9 +1526,15 @@ cdef void insert_node(FibonacciHeap* heap,
     #              - node is a valid pointer
     #              - node is not the child or sibling of another node
     if heap.min_node:
-        add_sibling(heap.min_node, node)
         if node.val < heap.min_node.val:
+            # Replace heap.min_node with node, which is always 
+            # at the leftmost end of the roots' linked-list.
+            node.left_sibling = NULL
+            node.right_sibling = heap.min_node
+            heap.min_node.left_sibling = node
             heap.min_node = node
+        else:
+            add_sibling(heap.min_node, node)
     else:
         heap.min_node = node
 
@@ -1543,6 +1552,11 @@ cdef void decrease_val(FibonacciHeap* heap,
         remove(node)
         insert_node(heap, node)
     elif heap.min_node.val > node.val:
+        # Replace heap.min_node with node, which is always 
+        # at the leftmost end of the roots' linked-list.
+        remove(node)
+        node.right_sibling = heap.min_node
+        heap.min_node.left_sibling = node.right_sibling
         heap.min_node = node
 
 
@@ -1552,8 +1566,6 @@ cdef void link(FibonacciHeap* heap, FibonacciNode* node):
     #              - node is already within heap
 
     cdef FibonacciNode *linknode
-    cdef FibonacciNode *parent
-    cdef FibonacciNode *child
 
     if heap.roots_by_rank[node.rank] == NULL:
         heap.roots_by_rank[node.rank] = node
@@ -1581,32 +1593,24 @@ cdef FibonacciNode* remove_min(FibonacciHeap* heap):
         unsigned int i
 
     # make all min_node children into root nodes
-    if heap.min_node.children:
-        temp = leftmost_sibling(heap.min_node.children)
-        temp_right = NULL
+    temp = heap.min_node.children
 
-        while temp:
-            temp_right = temp.right_sibling
-            remove(temp)
-            add_sibling(heap.min_node, temp)
-            temp = temp_right
+    while temp:
+        temp_right = temp.right_sibling
+        remove(temp)
+        add_sibling(heap.min_node, temp)
+        temp = temp_right
 
-        heap.min_node.children = NULL
-
-    # choose a root node other than min_node
-    temp = leftmost_sibling(heap.min_node)
-    if temp == heap.min_node:
-        if heap.min_node.right_sibling:
-            temp = heap.min_node.right_sibling
-        else:
-            out = heap.min_node
-            heap.min_node = NULL
-            return out
-
-    # remove min_node, and point heap to the new min
+    # remove min_root and choose another root as a preliminary min_root
     out = heap.min_node
+    temp = heap.min_node.right_sibling
     remove(heap.min_node)
     heap.min_node = temp
+    
+    if temp == NULL:
+        # There is a unique root in the tree, hence a unique node
+        # which is the minimum that we return here.
+        return out
 
     # re-link the heap
     for i in range(100):
@@ -1618,6 +1622,13 @@ cdef FibonacciNode* remove_min(FibonacciHeap* heap):
         temp_right = temp.right_sibling
         link(heap, temp)
         temp = temp_right
+    
+    # move heap.min_node to the leftmost end of the linked-list of roots
+    temp = leftmost_sibling(heap.min_node)
+    if heap.min_node != temp:
+        remove(heap.min_node)
+        heap.min_node.right_sibling = temp
+        temp.left_sibling = heap.min_node
 
     return out
 
@@ -1626,17 +1637,17 @@ cdef FibonacciNode* remove_min(FibonacciHeap* heap):
 # Debugging: Functions for printing the Fibonacci heap
 #
 #cdef void print_node(FibonacciNode* node, int level=0):
-#    print '%s(%i,%i) %i' % (level*'   ', node.index, node.val, node.rank)
+#    print('%s(%i,%i) %i' % (level*' ', node.index, node.val, node.rank))
 #    if node.children:
-#        print_node(leftmost_sibling(node.children), level+1)
+#        print_node(node.children, level+1)
 #    if node.right_sibling:
 #        print_node(node.right_sibling, level)
 #
 #
 #cdef void print_heap(FibonacciHeap* heap):
-#    print "---------------------------------"
-#    print "min node: (%i, %i)" % (heap.min_node.index, heap.min_node.val)
+#    print("---------------------------------")
 #    if heap.min_node:
-#        print_node(leftmost_sibling(heap.min_node))
+#        print("min node: (%i, %i)" % (heap.min_node.index, heap.min_node.val))
+#        print_node(heap.min_node)
 #    else:
-#        print "[empty heap]"
+#        print("[empty heap]")

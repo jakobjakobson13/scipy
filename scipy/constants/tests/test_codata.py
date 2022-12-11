@@ -23,9 +23,9 @@ def test_find():
 
 
 def test_basic_table_parse():
-    c = 'speed of light in vacuum'
-    assert_equal(codata.value(c), constants.c)
-    assert_equal(codata.value(c), constants.speed_of_light)
+    c_s = 'speed of light in vacuum'
+    assert_equal(value(c_s), c)
+    assert_equal(value(c_s), speed_of_light)
 
 
 def test_basic_lookup():
@@ -35,17 +35,17 @@ def test_basic_lookup():
 
 
 def test_find_all():
-    assert_(len(codata.find(disp=False)) > 300)
+    assert_(len(find(disp=False)) > 300)
 
 
 def test_find_single():
-    assert_equal(codata.find('Wien freq', disp=False)[0],
+    assert_equal(find('Wien freq', disp=False)[0],
                  'Wien frequency displacement law constant')
 
 
 def test_2002_vs_2006():
-    assert_almost_equal(codata.value('magn. flux quantum'),
-                        codata.value('mag. flux quantum'))
+    assert_almost_equal(value('magn. flux quantum'),
+                        value('mag. flux quantum'))
 
 
 def test_exact_values():
